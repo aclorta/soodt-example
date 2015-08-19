@@ -1,0 +1,162 @@
+// See AdamImage for serialization efforts
+
+import static org.bytedeco.javacpp.opencv_highgui.cvShowImage;
+import static org.bytedeco.javacpp.opencv_highgui.cvWaitKey;
+import static org.bytedeco.javacpp.opencv_imgproc.CV_GAUSSIAN;
+import static org.bytedeco.javacpp.opencv_imgproc.cvSmooth;
+
+import java.awt.image.BufferedImage;
+import java.io.FileWriter;
+
+import org.apache.spark.api.java.function.Function;
+import org.bytedeco.javacpp.opencv_core.IplImage;
+import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.Java2DFrameConverter;
+import org.bytedeco.javacv.OpenCVFrameConverter;
+import org.bytedeco.javacv.OpenCVFrameRecorder;
+
+// Writing to file
+double frameRate = grabber.getFrameRate();
+int pixelFormat = grabber.getPixelFormat();
+int videoCodec = grabber.getVideoCodec();
+
+WriteFile2 writeFile2 = new WriteFile2(width, height, frameRate, pixelFormat, videoCodec);
+
+class WriteFile2 implements Function<int[], int[]> {
+    static OpenCVFrameRecorder frameRecorder = null;
+    static Java2DFrameConverter buffConverter = null;
+    ArrToBufferedImage arrToBufferedImage = null;
+    
+    public WriteFile2 (int width, int height, double frameRate, int pixelFormat, int videoCodec) {
+        this.buffConverter = new Java2DFrameConverter();
+        this.frameRecorder = new OpenCVFrameRecorder("RAW", width, height);
+        this.arrToBufferedImage = new ArrToBufferedImage(width, height, width);
+        this.frameRecorder.setVideoCodec(videoCodec);
+        this.frameRecorder.setFrameRate(frameRate);
+        this.frameRecorder.setPixelFormat(pixelFormat);
+        try {
+            this.frameRecorder.start();
+        } catch(Exception e) { System.out.println("Exception caught: " + e); }
+    }
+    public int[] call(int[] rgbArray) throws Exception {
+        BufferedImage bufferedImage = this.arrToBufferedImage.call(rgbArray);
+        Frame frame = this.buffConverter.convert(bufferedImage);
+        this.frameRecorder.record(frame);
+        return rgbArray;
+    }
+    public void close() {
+        try {
+            this.frameRecorder.stop();
+        } catch(Exception e) { System.out.println("Exception caught: " + e); }
+    }
+}
+
+/**
+ * @author alorta
+ *
+ */
+class CVMotionDetect implements Function<int[], int[]> {
+    Integer w = null;
+    Integer h = null;
+    public static ArrToIplImage arrToIplImageCall = null;
+    public static IplImageToArr iplImageToArrCall = null;
+    
+    /**
+     * @param w
+     * @param h
+     */
+    public CVMotionDetect(Integer w, Integer h) {
+        this.w = w;
+        this.h = h;
+        this.arrToIplImageCall = new ArrToIplImage(this.w, this.h);
+        this.iplImageToArrCall = new IplImageToArr(this.w, this.h);
+    }
+    
+    /* (non-Javadoc)
+     * @see org.apache.spark.api.java.function.Function#call(java.lang.Object)
+     */
+    public int[] call(int[] rgbArray) {
+        IplImage frame = this.arrToIplImageCall.call(rgbArray);
+        cvSmooth(frame, frame, CV_GAUSSIAN, 9, 9, 2, 2);
+        return this.iplImageToArrCall.call(frame);
+    }
+}
+
+class WriteFile implements Function<int[], int[]> {
+    static FileWriter fileWriter = null;
+    public WriteFile (FileWriter fileWriter) {
+        this.fileWriter = fileWriter;
+    }
+    public int[] call(int[] rgbArray) throws Exception {
+        this.fileWriter.write(String.valueOf(rgbArray));
+        return rgbArray;
+    }
+}
+
+/**
+ * @author alorta
+ *
+ */
+class DisplayImage2 implements Function<int[], int[]>{
+    private static final long serialVersionUID = 1L;
+    Integer w = null;
+    Integer h = null;
+    static Java2DFrameConverter buffConverter = null;
+    static OpenCVFrameConverter.ToIplImage converter = null;
+    
+    /**
+     * @param w
+     * @param h
+     */
+    public DisplayImage2 (Integer w, Integer h) {
+        this.w = w;
+        this.h = h;
+        DisplayImage2.buffConverter = new Java2DFrameConverter();
+        DisplayImage2.converter = new OpenCVFrameConverter.ToIplImage();
+    }
+    /* (non-Javadoc)
+     * @see org.apache.spark.api.java.function.Function#call(java.lang.Object)
+     */
+    public int[] call(int[] rgbArray) {
+        ArrToBufferedImage bufferedImageCall = new ArrToBufferedImage(this.w, this.h, this.w);
+        BufferedImage buffFrame = bufferedImageCall.call(rgbArray);
+        Frame frame = DisplayImage2.buffConverter.convert(buffFrame);
+        IplImage iplFrame = converter.convert(frame);
+        cvShowImage("video capture", iplFrame);
+        cvWaitKey(1);
+        return rgbArray;
+    }
+}
+
+/**
+ * 
+ * @author alorta
+ */
+class DisplayImage3 implements Function<int[], Void> {
+    static CanvasFrame canvasFrame = new CanvasFrame("Video Feed");
+    ArrToBufferedImage arrToBufferedImage = null;
+    
+    /**
+     * @param width
+     * @param height
+     * @param scansize
+     */
+    public DisplayImage3 (int width, int height, int scansize) {
+        this.canvasFrame.setCanvasSize(width, height);
+        this.arrToBufferedImage = new ArrToBufferedImage(width, height, width);
+    }
+    /* (non-Javadoc)
+     * @see org.apache.spark.api.java.function.Function#call(java.lang.Object)
+     */
+    public Void call(int[] rgbArray) {
+        BufferedImage frame = this.arrToBufferedImage.call(rgbArray);
+        this.canvasFrame.showImage(frame);
+        return null;
+    }
+    /**
+     * Properly closes the canvas frame upon program termination
+     */
+    public void close() {
+        this.canvasFrame.dispose();
+    }
+}
